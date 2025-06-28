@@ -17,7 +17,7 @@ class SentimentDataset(Dataset):
                             img.verify()
                         self.samples.append((path, label))
                     except (UnidentifiedImageError, OSError) as e:
-                        print(f"[제외] 잘못된 이미지: {path}")
+                        print(f"{e} : {path}")
                         os.remove(path)
 
     def __len__(self):

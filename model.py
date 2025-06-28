@@ -16,17 +16,21 @@ class Mode(Enum):
 
 
 class TaskSpecificAdapter(nn.Module):
-    def __init__(self, hidden_dim, bottleneck_dim=64):
+    def __init__(self, hidden_dim, num_classes, dropout=0.2):
         super().__init__()
         self.adapter = nn.Sequential(
-            nn.Linear(hidden_dim, bottleneck_dim),
+            nn.Linear(hidden_dim, hidden_dim//2),
+            nn.BatchNorm1d(hidden_dim//2),
             nn.GELU(),
-            nn.Linear(bottleneck_dim, hidden_dim)
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim//2, hidden_dim)
         )
+        self.classifier = nn.Linear(hidden_dim, num_classes)
 
     def forward(self, x):
         # Residual connection with task-specific adaptation
-        return x + self.adapter(x)
+        adapted_features = x + self.adapter(x)
+        return self.classifier(adapted_features)
 
 
 class Blip2MultiTask(nn.Module):
@@ -46,21 +50,16 @@ class Blip2MultiTask(nn.Module):
 
         for p in self.blip.parameters():
             p.requires_grad = False
-        
         q_dim = self.blip.config.qformer_config.hidden_size
         print(f'Hidden dim: {q_dim}')
 
-        self.sentiment_head = MLPHead(
-            input_dim=q_dim,
-            hidden_dims=[512, 256],
-            num_classes=sentiment_classes,
-            dropout_rate=0.2
+        self.sentiment_head = TaskSpecificAdapter(
+            hidden_dim_dim=q_dim,
+            num_classes=sentiment_classes
         )
-        self.category_head = MLPHead(
-            input_dim=q_dim,
-            hidden_dims=[512, 256],
-            num_classes=category_classes,
-            dropout_rate=0.2
+        self.category_head = TaskSpecificAdapter(
+            hidden_dim_dim=q_dim,
+            num_classes=category_classes
         )
 
         self.caption_max_new_tokens = caption_max_new_tokens
@@ -84,32 +83,33 @@ class Blip2MultiTask(nn.Module):
 
     def forward(self, pixel_values: torch.Tensor, mode: Mode):
         if mode == Mode.TEXT:
-            generate_ids = self.blip.generate(
-                pixel_values=pixel_values,
-                max_new_tokens=self.caption_max_new_tokens
-            )
-            generated_text = self.processor.batch_decode(generate_ids, skip_special_tokens=True)[0].strip()
+            with torch.no_grad():
+                generate_ids = self.blip.generate(
+                    pixel_values=pixel_values,
+                    max_new_tokens=self.caption_max_new_tokens
+                )
+                generated_text = self.processor.batch_decode(generate_ids, skip_special_tokens=True)[0].strip()
             return generated_text
-        
+
         elif mode == Mode.ALL:
             features = self.extract_features(pixel_values)
-            
+
             sentiment_logits = self.sentiment_head(features)
             category_logits = self.category_head(features)
-            
+
             return {
                 'sentiment': sentiment_logits,
                 'category': category_logits
             }
-        
+
         elif mode in [Mode.SENTIMENT, Mode.CATEGORY]:
             features = self.extract_features(pixel_values)
-            
+
             if mode == Mode.SENTIMENT:
                 return self.sentiment_head(features)
             elif mode == Mode.CATEGORY:
                 return self.category_head(features)
-        
+
         else:
             raise ValueError(f"Unsupported mode: {mode}")
 
@@ -117,45 +117,15 @@ class Blip2MultiTask(nn.Module):
         params = []
         if which in [Mode.SENTIMENT, Mode.ALL]:
             params.extend(list(self.sentiment_head.parameters()))
-        
+
         if which in [Mode.CATEGORY, Mode.ALL]:
             params.extend(list(self.category_head.parameters()))
         return params
-    
+
     def print_trainable_parameters(self):
         total_params = sum(p.numel() for p in self.parameters())
         trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
-        
+
         print(f"Total parameters: {total_params:,}")
         print(f"Trainable parameters: {trainable_params:,}")
         print(f"Trainable ratio: {100 * trainable_params / total_params:.2f}%")
-
-
-class MLPHead(nn.Module):
-    def __init__(self, input_dim, hidden_dims, num_classes, dropout_rate=0.2):
-        super().__init__()
-        layers = []
-
-        self.adapter = TaskSpecificAdapter(input_dim)
-
-        prev_dim = input_dim
-        for hidden_dim in hidden_dims:
-            layers.extend([
-                nn.Linear(prev_dim, hidden_dim),
-                nn.BatchNorm1d(hidden_dim),
-                nn.ReLU(),
-                nn.Dropout(dropout_rate)
-            ])
-            prev_dim = hidden_dim
-
-        layers.append(nn.Linear(prev_dim, num_classes))
-        self.mlp = nn.Sequential(*layers)
-
-        for layer in self.mlp:
-            if isinstance(layer, nn.Linear):
-                nn.init.xavier_uniform_(layer.weight)
-                nn.init.zeros_(layer.bias)
-
-    def forward(self, x):
-        x = self.adapter(x)
-        return self.mlp(x)
