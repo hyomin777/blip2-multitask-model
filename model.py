@@ -1,12 +1,9 @@
-import math
 from enum import Enum
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from transformers import (
     Blip2Processor, Blip2ForConditionalGeneration
 )
-
 
 class Mode(Enum):
     ALL = 'all'
@@ -43,31 +40,33 @@ class Blip2MultiTask(nn.Module):
     ):
         super().__init__()
         self.blip = Blip2ForConditionalGeneration.from_pretrained(
-            blip_name,
-            torch_dtype=torch.float16,
+            blip_name
         )
         self.processor = Blip2Processor.from_pretrained(blip_name)
 
         for p in self.blip.parameters():
             p.requires_grad = False
-        q_dim = self.blip.config.qformer_config.hidden_size
-        print(f'Hidden dim: {q_dim}')
+        embed_dim = self.blip.vision_model.config.hidden_size
+        print(f'Hidden dim: {embed_dim}')
 
         self.sentiment_head = TaskSpecificAdapter(
-            hidden_dim=q_dim,
+            hidden_dim=embed_dim,
             num_classes=sentiment_classes
         )
         self.category_head = TaskSpecificAdapter(
-            hidden_dim=q_dim,
+            hidden_dim=embed_dim,
             num_classes=category_classes
         )
 
         self.caption_max_new_tokens = caption_max_new_tokens
 
-    def extract_features(self, pixel_values: torch.Tensor):
-        # Image encoding
+    def extract_image_embeds(self, pixel_values: torch.Tensor):
         with torch.no_grad():
             image_embeds = self.blip.vision_model(pixel_values).last_hidden_state
+        return image_embeds
+
+    def extract_query_embeds(self, image_embeds: torch.Tensor):
+        with torch.no_grad():
             image_attention_mask = torch.ones(
                 image_embeds.size()[:-1], dtype=torch.long, device=image_embeds.device
             )
@@ -82,6 +81,8 @@ class Blip2MultiTask(nn.Module):
         return query_outputs.pooler_output  # [B, q_dim]
 
     def forward(self, pixel_values: torch.Tensor, mode: Mode):
+        image_embeds = self.extract_image_embeds(pixel_values)
+
         if mode == Mode.TEXT:
             with torch.no_grad():
                 generate_ids = self.blip.generate(
@@ -91,24 +92,13 @@ class Blip2MultiTask(nn.Module):
                 generated_text = self.processor.batch_decode(generate_ids, skip_special_tokens=True)[0].strip()
             return generated_text
 
-        elif mode == Mode.ALL:
-            features = self.extract_features(pixel_values)
-
-            sentiment_logits = self.sentiment_head(features)
-            category_logits = self.category_head(features)
-
-            return {
-                'sentiment': sentiment_logits,
-                'category': category_logits
-            }
-
         elif mode in [Mode.SENTIMENT, Mode.CATEGORY]:
-            features = self.extract_features(pixel_values)
+            pooled_features = image_embeds[:, 0, :]
 
             if mode == Mode.SENTIMENT:
-                return self.sentiment_head(features)
+                return self.sentiment_head(pooled_features)
             elif mode == Mode.CATEGORY:
-                return self.category_head(features)
+                return self.category_head(pooled_features)
 
         else:
             raise ValueError(f"Unsupported mode: {mode}")
