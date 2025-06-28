@@ -54,11 +54,11 @@ class Blip2MultiTask(nn.Module):
         print(f'Hidden dim: {q_dim}')
 
         self.sentiment_head = TaskSpecificAdapter(
-            hidden_dim_dim=q_dim,
+            hidden_dim=q_dim,
             num_classes=sentiment_classes
         )
         self.category_head = TaskSpecificAdapter(
-            hidden_dim_dim=q_dim,
+            hidden_dim=q_dim,
             num_classes=category_classes
         )
 
