@@ -13,8 +13,8 @@ from torch.utils.data import Dataset, DataLoader, Subset, random_split
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import transforms, InterpolationMode
 from scheduler import CosineAnnealingWarmUpRestarts
-from augmentation import ConservativeAugmentation
-from dataset import TransformedSubset, pil_collate_fn
+from augmentation import Transform
+from dataset import TransformedSubset
 from model import Mode, Blip2MultiTask
 
 
@@ -43,11 +43,6 @@ class ModelTrainer:
 
         self.model_cls = model_cls
         self.model = self._create_model().to(self.device)
-
-        print(self.model.processor.image_processor)
-        print(self.model.processor.image_processor.size)
-
-        self.size = tuple(self.model.processor.image_processor.size.values())
 
         self.dataset_cls = dataset_cls
 
@@ -102,12 +97,11 @@ class ModelTrainer:
             num_workers=self.config.training.num_workers,
             pin_memory=True,
             drop_last=False,
-            collate_fn=pil_collate_fn
         )
         return dataloader, sampler
 
-    def _create_transform(self):
-        return ConservativeAugmentation(self.size)
+    def _create_transform(self, augmentation):
+        return Transform(self.config.model, augmentation)
 
     def _save_weights(self, model, path):
         if not self.is_main:
@@ -172,8 +166,11 @@ class ModelTrainer:
             return False
 
     def train(self):
+        for p in self.model.category_head.parameters():
+            p.requires_grad = False
         parameters = self.model.get_trainable_parameters(self.mode)
         self._create_optimizer(parameters)
+        self.model = self._wrap_model(self.model)
         criterion = nn.CrossEntropyLoss()
         scheduler = self._create_scheduler()
 
@@ -188,8 +185,8 @@ class ModelTrainer:
             generator=torch.Generator().manual_seed(42)
         )
 
-        train_transform = self._create_transform()
-        validation_transform = transforms.Resize(self.size)
+        train_transform = self._create_transform(augmentation=True)
+        validation_transform = self._create_transform(augmentation=False)
 
         train_dataset = TransformedSubset(Subset(base_dataset, train_indices), train_transform)
         validation_dataset = TransformedSubset(Subset(base_dataset, validation_indices), validation_transform)
@@ -226,12 +223,11 @@ class ModelTrainer:
                 total = 0
 
                 for batch in validation_dataloader:
-                    images = batch['image']
+                    images = batch['image'].to(self.device)
                     labels = batch['label'].to(self.device)
 
-                    pixel_values = self.model.processor(images=images, return_tensors='pt')["pixel_values"].to(self.device)
                     with torch.no_grad():
-                        outputs = self.model(pixel_values, self.mode)
+                        outputs = self.model(images, self.mode)
                         loss = criterion(outputs, labels)
 
                     val_loss += loss.item()
@@ -256,12 +252,10 @@ class ModelTrainer:
                     self.writer.add_scalar("lr", self.optimizer.param_groups[0]['lr'], epoch)
 
     def train_step(self, batch, criterion):
-        images = batch['image']
+        images = batch['image'].to(self.device)
         labels = batch['label'].to(self.device)
 
-        pixel_values = self.model.processor(images=images, return_tensors='pt')["pixel_values"].to(self.device)
-
-        outputs = self.model(pixel_values, self.mode)
+        outputs = self.model(images, self.mode)
         loss = criterion(outputs, labels)
 
         self.optimizer.zero_grad()
