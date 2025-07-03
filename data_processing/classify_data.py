@@ -6,7 +6,7 @@ import pandas as pd
 from transformers import CLIPProcessor, CLIPModel
 
 IMAGE_DIR = "/home/hyomin/workspace/k-digital/train/data/sentiment/positive"
-OUTPUT_CSV = "clip_classification_results.csv"
+OUTPUT_CSV = "classification_results.csv"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 CONFIDENCE_THRESHOLD = 0.15
 
