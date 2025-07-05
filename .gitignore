@@ -4,4 +4,4 @@ logs
 output
 config
 crawler.py
-
+*.csv
