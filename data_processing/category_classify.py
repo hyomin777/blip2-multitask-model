@@ -5,8 +5,8 @@ from tqdm import tqdm
 import pandas as pd
 from transformers import CLIPProcessor, CLIPModel
 
-IMAGE_DIR = "/home/hyomin/workspace/k-digital/train/data/sentiment/positive"
-OUTPUT_CSV = "classification_results.csv"
+IMAGE_DIR = "/home/hyomin/workspace/k-digital/data"
+OUTPUT_CSV = "category.csv"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 CONFIDENCE_THRESHOLD = 0.15
 
@@ -61,7 +61,7 @@ CLASS_PROMPTS = {
         "a photo of a memorable object",
         "a photo of a small item",
         "a photo of an object"
-    ]
+    ],
 }
 
 # Load model
@@ -92,7 +92,7 @@ for root, _, files in os.walk(IMAGE_DIR):
 
 # Classify
 results = []
-for path in tqdm(image_paths, desc="Classifying with multi-prompts + 기타 fallback"):
+for path in tqdm(image_paths):
     try:
         image = Image.open(path).convert("RGB")
         inputs = clip_processor(images=image, return_tensors="pt").to(DEVICE)
