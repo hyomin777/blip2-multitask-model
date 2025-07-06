@@ -4,10 +4,11 @@ import torch
 from torch.utils.data import Dataset
 
 
-class SentimentDataset(Dataset):
+class ImageDataset(Dataset):
     def __init__(self, root_dir):
+        root_dir = os.path.expanduser(root_dir)
         self.samples = []
-        for label, folder in enumerate(['positive', 'negative']):  # 0, 1
+        for label, folder in enumerate(sorted(os.listdir(root_dir))):
             folder_path = os.path.join(root_dir, folder)
             for fname in os.listdir(folder_path):
                 if fname.lower().endswith(('.jpg', '.png', '.jpeg')):
@@ -25,7 +26,11 @@ class SentimentDataset(Dataset):
 
     def __getitem__(self, idx):
         path, label = self.samples[idx]
-        img = Image.open(path).convert('RGB')
+        try:
+            img = Image.open(path).convert('RGB')
+        except Exception as e:
+            print(f"[Error loading] {e}: {path}")
+            raise e
         return img, label
 
 
@@ -42,16 +47,6 @@ class TransformedSubset(Dataset):
 
     def __len__(self):
         return len(self.subset)
-
-
-
-def pil_collate_fn(batch):
-    """
-    batch: list of dicts with keys 'image' (PIL.Image) and 'label' (int)
-    """
-    images = [item['image'] for item in batch]
-    labels = torch.tensor([item['label'] for item in batch], dtype=torch.long)
-    return {'image': images, 'label': labels}
 
 
 

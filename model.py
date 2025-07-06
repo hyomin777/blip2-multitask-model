@@ -1,4 +1,3 @@
-import math
 from enum import Enum
 import torch
 import torch.nn as nn
@@ -35,7 +34,7 @@ class TaskSpecificAdapter(nn.Module):
 class Blip2MultiTask(nn.Module):
     def __init__(
         self,
-        blip_name: str = "Salesforce/blip2-opt-2.7b",
+        blip_name: str = "Salesforce/blip2-opt-2.7b-coco",
         sentiment_classes: int = 2,
         category_classes: int = 8,
         caption_max_new_tokens: int = 50,

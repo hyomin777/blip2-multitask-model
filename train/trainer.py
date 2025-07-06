@@ -11,7 +11,6 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import Dataset, DataLoader, Subset, random_split
 from torch.utils.tensorboard import SummaryWriter
-from torchvision.transforms import transforms, InterpolationMode
 from scheduler import CosineAnnealingWarmUpRestarts
 from augmentation import Transform
 from dataset import TransformedSubset
@@ -72,7 +71,7 @@ class ModelTrainer:
             dist.destroy_process_group()
 
     def _wrap_model(self, model):
-        return DDP(model, device_ids=[self.rank])
+        return DDP(model, device_ids=[self.rank], find_unused_parameters=True)
 
     def _create_model(self):
         return self.model_cls(self.config.model)
@@ -159,15 +158,13 @@ class ModelTrainer:
             if self.is_main:
                 print(f"[INFO] Resumed from {self.resume} | epoch: {self.start_epoch} | step: {self.step} | loss: {self.best_loss}")
             return True
-        
+
         except Exception as e:
             if self.is_main:
                 print(f"[ERROR] Failed to load checkpoint: {e}")
             return False
 
     def train(self):
-        for p in self.model.category_head.parameters():
-            p.requires_grad = False
         parameters = self.model.get_trainable_parameters(self.mode)
         self._create_optimizer(parameters)
         self.model = self._wrap_model(self.model)
