@@ -3,14 +3,20 @@ import sys
 
 sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
 
-from pathlib import Path
+import numpy as np
+import matplotlib.pyplot as plt
+
 from tqdm import tqdm
+from pathlib import Path
+from sklearn.metrics import confusion_matrix
+
 import torch
 import torch.nn as nn
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import Dataset, DataLoader, Subset, random_split
 from torch.utils.tensorboard import SummaryWriter
+
 from scheduler import CosineAnnealingWarmUpRestarts
 from augmentation import Transform
 from dataset import TransformedSubset
@@ -219,6 +225,8 @@ class ModelTrainer:
                 correct = 0
                 total = 0
 
+                val_labels = []
+                val_preds = []
                 for batch in validation_dataloader:
                     images = batch['image'].to(self.device)
                     labels = batch['label'].to(self.device)
@@ -226,6 +234,7 @@ class ModelTrainer:
                     with torch.no_grad():
                         outputs = self.model(images, self.mode)
                         loss = criterion(outputs, labels)
+                        preds = torch.argmax(outputs, dim=1)
 
                     val_loss += loss.item()
 
@@ -233,9 +242,17 @@ class ModelTrainer:
                     correct += batch_correct
                     total += batch_total
 
+                    val_labels.append(labels.cpu().numpy())
+                    val_preds.append(preds.cpu().numpy())
+
+
                 avg_val_loss = val_loss / len(validation_dataloader)
                 val_accuracy = correct / total
                 print(f"[Epoch: {epoch}] Val Loss: {avg_val_loss:.4f} | Accuracy: {val_accuracy*100:.2f}%")
+
+                val_labels = np.concatenate(val_labels)
+                val_preds = np.concatenate(val_preds)
+                cm = confusion_matrix(val_labels, val_preds)
 
                 if self.best_loss > avg_val_loss:
                     self.best_loss = avg_val_loss
@@ -247,6 +264,18 @@ class ModelTrainer:
                     self.writer.add_scalar("val_accuracy", val_accuracy, epoch)
                     self.writer.add_scalar("train_loss", avg_loss, epoch)
                     self.writer.add_scalar("lr", self.optimizer.param_groups[0]['lr'], epoch)
+
+                    fig, ax = plt.subplots(figsize=(8,8))
+                    ax.imshow(cm, cmap="Blues")
+                    ax.set_xlabel("Predicted")
+                    ax.set_ylabel("True")
+                    ax.set_title(f"Confusion Matrix (Epoch {epoch})")
+
+                    for (i, j), z in np.ndenumerate(cm):
+                        ax.text(j, i, str(z), ha='center', va='center')
+
+                    self.writer.add_figure("Confusion_Matrix", fig, epoch)
+                    plt.close(fig)
 
     def train_step(self, batch, criterion):
         images = batch['image'].to(self.device)
